@@ -12,6 +12,6 @@ require (
 
 require (
 	github.com/tdewolff/parse/v2 v2.8.1 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/sys v0.34.0 // indirect
 )
