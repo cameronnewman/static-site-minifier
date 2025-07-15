@@ -1,0 +1,40 @@
+name: Continuous Integration
+on:
+  push:
+    branches:
+      - '*'
+
+jobs:
+
+  lint:
+    name: build
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ci
+    steps:
+    - name: Check out the code
+      uses: actions/checkout@v2
+    - name: Run lint
+      run: make lint
+
+  test:
+    name: build
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ci
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v2
+      - name: Run test
+        run: make test
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ci
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v2
+      - name: Run build
+        run: make build
