@@ -1,4 +1,4 @@
-module github.com/cameronnewman/cameron-newman-io
+module github.com/cameronnewman/static-site-minifier
 
 go 1.24.4
 
