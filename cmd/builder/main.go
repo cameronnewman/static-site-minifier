@@ -353,7 +353,7 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		logger.Fatal("Please specify a subcommand. Usage: go run main.go [build|run]")
+		logger.Fatal("Please specify a subcommand. Usage: builder [build|run]")
 	}
 
 	switch os.Args[1] {
@@ -366,7 +366,7 @@ func main() {
 		logger.Info("Starting serve...", zap.String("source_directory", cfg.SourceDirectory), zap.Int("port", cfg.Port))
 		serve(cfg.SourceDirectory, cfg.Port, logger)
 	default:
-		logger.Info("Unknown command. Usage: go run main.go [build|run]")
+		logger.Info("Unknown command. Usage: builder [build|run]")
 	}
 }
 
