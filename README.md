@@ -40,15 +40,19 @@ safe to remove and preserves everything else.
   parentheses (`calc()`), and descendant selectors like `div :hover`.
 - **JavaScript** - a tokenizer that understands strings, template
   literals (with nested `${}` expressions), and regex-vs-division
-  removes comments and collapses whitespace, while preserving line
-  breaks so automatic semicolon insertion behaviour never changes.
-  On top of that, a scope analysis renames function-local variables to
-  short names (minifying lodash by 84% and jQuery by 63%). Renaming is
-  strictly conservative: a name is renamed only when provably local
-  everywhere, new names are globally fresh, top-level bindings are
-  never touched, and the pass disables itself entirely on constructs
-  outside its analysable subset (ES2015+ binding forms, `eval`,
-  `with`). License banner comments (`/*!`) are preserved.
+  removes comments and whitespace. A scope analysis then renames
+  function-local variables to short names, removes line breaks
+  (inserting `;` exactly where automatic semicolon insertion applied,
+  so parsing is provably unchanged), drops redundant semicolons, and
+  shortens literals (`true` to `!0`, `undefined` to `void 0`).
+  Together this minifies lodash by 85% and jQuery by 66% - within a
+  few points of AST-based minifiers. Everything is strictly
+  conservative: a name is renamed only when provably local everywhere,
+  new names are globally fresh, top-level bindings are never touched,
+  and these passes disable themselves entirely on constructs outside
+  the analysable subset (ES2015+ binding forms, `eval`, `with`),
+  falling back to whitespace-only minification. License banner
+  comments (`/*!`) are preserved.
 
 ## Requirements
 

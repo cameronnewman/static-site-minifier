@@ -23,18 +23,36 @@ import (
 // substitutions, or dynamic scoping via eval/with), mangling is
 // disabled entirely and the output falls back to whitespace-only
 // minification. All ambiguities resolve toward not renaming.
-func mangleJS(tokens []jsToken) map[int][]byte {
+//
+// Alongside renaming, the analysis produces a jsEmitInfo that lets the
+// emitter remove line breaks safely (see emitJS) and records safe
+// literal shortenings (true -> !0, false -> !1, undefined -> void 0).
+func mangleJS(tokens []jsToken) (map[int][]byte, *jsEmitInfo) {
 	a := &jsAnalysis{
 		root:     &jsScope{},
 		occCount: map[string]int{},
 		fresh:    map[string]bool{},
+		info:     &jsEmitInfo{exprClose: map[int]bool{}},
+		subs:     map[int][]byte{},
 	}
 	a.scope = a.root
 	a.run(tokens)
 	if a.bailed {
-		return nil
+		return nil, nil
 	}
-	return a.assign()
+	a.info.ok = true
+	return a.assign(), a.info
+}
+
+// jsEmitInfo carries per-token facts the emitter needs to remove line
+// breaks without changing how the program parses.
+type jsEmitInfo struct {
+	ok bool
+	// exprClose records, for every ')' and '}' token, whether it ends
+	// an expression (call/grouping paren, object literal, function
+	// expression body) as opposed to a statement construct (control
+	// heads, blocks, declaration bodies).
+	exprClose map[int]bool
 }
 
 type jsScope struct {
@@ -71,10 +89,12 @@ const (
 )
 
 type jsFrame struct {
-	kind    int
-	scope   *jsScope // scope restored when the frame pops (functions, catch blocks)
-	ternary int      // open '?' operators inside this frame
-	inCase  bool     // between 'case' and its ':'
+	kind      int
+	scope     *jsScope // scope restored when the frame pops (functions, catch blocks)
+	ternary   int      // open '?' operators inside this frame
+	inCase    bool     // between 'case' and its ':'
+	exprParen bool     // '(' of an expression rather than a control head
+	funcExpr  bool     // function body of a function expression
 }
 
 type jsSite struct {
@@ -100,10 +120,18 @@ type jsAnalysis struct {
 	fresh    map[string]bool // names that must not be produced by the generator
 	bailed   bool
 
+	info *jsEmitInfo
+	subs map[int][]byte // literal shortenings by token index
+
+	// undefSites are value-position 'undefined' tokens that may be
+	// shortened when the name is never declared.
+	undefSites []int
+
 	// pendingScope is the scope for the '{' that must follow a parsed
 	// function head or catch clause.
 	pendingScope *jsScope
 	pendingKind  int
+	pendingFnExp bool
 }
 
 // jsKeywords are names that are never variable references.
@@ -212,7 +240,14 @@ func (a *jsAnalysis) punct(tokens []jsToken, i, prev int) {
 			}
 		}
 	case "(":
-		a.frames = append(a.frames, jsFrame{kind: frameParen})
+		expr := true
+		if prev >= 0 && tokens[prev].kind == jsIdent {
+			switch string(tokens[prev].text) {
+			case "if", "for", "while", "switch", "catch", "with":
+				expr = false
+			}
+		}
+		a.frames = append(a.frames, jsFrame{kind: frameParen, exprParen: expr})
 	case "[":
 		if t := a.top(); t != nil && t.kind == frameObject {
 			p := a.prevText(tokens, prev)
@@ -226,6 +261,7 @@ func (a *jsAnalysis) punct(tokens []jsToken, i, prev int) {
 		frame := jsFrame{kind: frameBlock}
 		if a.pendingScope != nil {
 			frame.kind = a.pendingKind
+			frame.funcExpr = a.pendingFnExp
 			frame.scope = a.scope
 			a.scope = a.pendingScope
 			a.pendingScope = nil
@@ -234,7 +270,7 @@ func (a *jsAnalysis) punct(tokens []jsToken, i, prev int) {
 		}
 		a.frames = append(a.frames, frame)
 	case ")", "]", "}":
-		a.popFrame()
+		a.popFrame(i)
 	case ";":
 		a.endListAtDepth()
 	case ",":
@@ -265,12 +301,21 @@ func (a *jsAnalysis) isObjectBrace(tokens []jsToken, prev int) bool {
 	return jsRegexAllowedTok(p)
 }
 
-func (a *jsAnalysis) popFrame() {
+func (a *jsAnalysis) popFrame(i int) {
 	if len(a.frames) == 0 {
+		a.bailed = true // unbalanced input
 		return
 	}
 	frame := a.frames[len(a.frames)-1]
 	a.frames = a.frames[:len(a.frames)-1]
+	switch frame.kind {
+	case frameParen:
+		a.info.exprClose[i] = frame.exprParen
+	case frameObject:
+		a.info.exprClose[i] = true
+	case frameFunc:
+		a.info.exprClose[i] = frame.funcExpr
+	}
 	if frame.scope != nil {
 		a.scope = frame.scope
 	}
@@ -359,6 +404,9 @@ func (a *jsAnalysis) ident(tokens []jsToken, i, prev int) int {
 		return i
 	}
 	if jsKeywords[name] {
+		if name == "true" || name == "false" {
+			a.literalSite(tokens, i, prev, name)
+		}
 		return i
 	}
 
@@ -396,7 +444,49 @@ func (a *jsAnalysis) ident(tokens []jsToken, i, prev int) int {
 	a.occs = append(a.occs, jsSite{idx: i, name: name, scope: a.scope})
 	a.occCount[name]++
 	a.fresh[name] = true
+	if name == "undefined" && a.literalReplaceable(tokens, i) {
+		a.undefSites = append(a.undefSites, i)
+	}
 	return i
+}
+
+// literalSite records a boolean literal that can be shortened, unless
+// it is an object key or in a position where the replacement would
+// parse differently.
+func (a *jsAnalysis) literalSite(tokens []jsToken, i, prev int, name string) {
+	p := a.prevText(tokens, prev)
+	if t := a.top(); t != nil && t.kind == frameObject && (p == "{" || p == ",") {
+		if next := jsNextSig(tokens, i); next >= 0 && string(tokens[next].text) == ":" {
+			return // {true: 1} - a property key
+		}
+	}
+	if !a.literalReplaceable(tokens, i) {
+		return
+	}
+	if name == "true" {
+		a.subs[i] = []byte("!0")
+	} else {
+		a.subs[i] = []byte("!1")
+	}
+}
+
+// literalReplaceable reports whether replacing the literal at i with a
+// unary expression keeps the same parse: not a member-access base and
+// not an assignment target.
+func (a *jsAnalysis) literalReplaceable(tokens []jsToken, i int) bool {
+	next := jsNextSig(tokens, i)
+	if next < 0 || tokens[next].kind != jsPunct {
+		return next < 0 || tokens[next].kind != jsTemplate // no tagged templates
+	}
+	switch string(tokens[next].text) {
+	case ".", "[", "++", "--":
+		return false
+	case "=":
+		// '=' is assignment unless it is the first char of '=='/'==='.
+		after := jsNextSig(tokens, next)
+		return after >= 0 && tokens[after].kind == jsPunct && string(tokens[after].text) == "="
+	}
+	return true
 }
 
 func (a *jsAnalysis) declareAt(i int, name string, scope *jsScope) {
@@ -466,6 +556,7 @@ func (a *jsAnalysis) functionHead(tokens []jsToken, i, prev int) int {
 
 	a.pendingScope = scope
 	a.pendingKind = frameFunc
+	a.pendingFnExp = !isDecl
 	return j
 }
 
@@ -484,6 +575,7 @@ func (a *jsAnalysis) paramList(tokens []jsToken, j int, scope *jsScope) int {
 		}
 		switch {
 		case tokens[j].kind == jsPunct && string(tokens[j].text) == ")":
+			a.info.exprClose[j] = false
 			return j
 		case tokens[j].kind == jsIdent && !jsKeywords[string(tokens[j].text)] &&
 			!jsBailIdents[string(tokens[j].text)] && (tokens[j].text[0] < '0' || tokens[j].text[0] > '9'):
@@ -529,8 +621,10 @@ func (a *jsAnalysis) catchClause(tokens []jsToken, i int) int {
 		a.bailed = true
 		return i
 	}
+	a.info.exprClose[end] = false
 	a.pendingScope = scope
 	a.pendingKind = frameBlock
+	a.pendingFnExp = false
 	return end
 }
 
@@ -556,6 +650,7 @@ func (a *jsAnalysis) objectKey(tokens []jsToken, i int) int {
 				}
 				a.pendingScope = scope
 				a.pendingKind = frameFunc
+				a.pendingFnExp = true
 				return end
 			}
 		}
@@ -578,6 +673,7 @@ func (a *jsAnalysis) objectKey(tokens []jsToken, i int) int {
 		}
 		a.pendingScope = scope
 		a.pendingKind = frameFunc
+		a.pendingFnExp = true
 		return end
 	default:
 		// Shorthand properties ({name}) tie the binding to its
@@ -641,6 +737,24 @@ func (a *jsAnalysis) assign() map[int][]byte {
 			renames[site.idx] = r
 		}
 	}
+
+	for idx, r := range a.subs {
+		renames[idx] = r
+	}
+	// undefined can be shortened only when it is never a real binding.
+	undefDeclared := false
+	for _, d := range a.declared {
+		if d.name == "undefined" {
+			undefDeclared = true
+			break
+		}
+	}
+	if !undefDeclared {
+		for _, idx := range a.undefSites {
+			renames[idx] = []byte("void 0")
+		}
+	}
+
 	if len(renames) == 0 {
 		return nil
 	}

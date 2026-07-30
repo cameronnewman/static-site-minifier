@@ -51,9 +51,9 @@ func JS(in []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	renames := mangleJS(tokens)
+	renames, info := mangleJS(tokens)
 
-	return emitJS(tokens, renames), nil
+	return emitJS(tokens, renames, info), nil
 }
 
 // tokenizeJS scans in into tokens, dropping comments (except license
@@ -162,10 +162,15 @@ func tokenizeJS(in []byte) ([]jsToken, error) {
 }
 
 // emitJS renders tokens with minimal whitespace, applying renames to
-// eligible identifier tokens. renames maps token index to replacement.
-func emitJS(tokens []jsToken, renames map[int][]byte) []byte {
+// eligible identifier tokens. When info is available (the analysis
+// succeeded), line breaks are removed entirely: a break is dropped
+// where the parse is unaffected and replaced with ';' exactly where
+// automatic semicolon insertion applied, and semicolons that end a
+// block are dropped.
+func emitJS(tokens []jsToken, renames map[int][]byte, info *jsEmitInfo) []byte {
 	var out bytes.Buffer
 	var prevText []byte
+	prevEnds := false
 
 	for i := range tokens {
 		tok := &tokens[i]
@@ -177,6 +182,7 @@ func emitJS(tokens []jsToken, renames map[int][]byte) []byte {
 			out.Write(tok.text)
 			out.WriteByte('\n')
 			prevText = nil
+			prevEnds = false
 			continue
 		}
 
@@ -185,19 +191,115 @@ func emitJS(tokens []jsToken, renames map[int][]byte) []byte {
 			text = r
 		}
 
+		// A semicolon that ends the last statement of a block (or the
+		// file) is redundant.
+		if info != nil && info.ok && tok.kind == jsPunct && len(tok.text) == 1 && tok.text[0] == ';' && prevEnds {
+			next := jsNextSig(tokens, i)
+			if next < 0 || (tokens[next].kind == jsPunct && len(tokens[next].text) == 1 && tokens[next].text[0] == '}') {
+				continue
+			}
+		}
+
 		if out.Len() > 0 && prevText != nil {
 			switch {
-			case tok.nlBefore:
+			case tok.nlBefore && (info == nil || !info.ok):
 				out.WriteByte('\n')
+			case tok.nlBefore:
+				switch jsNewlineAction(tokens, i, prevText, prevEnds) {
+				case ';':
+					out.WriteByte(';')
+				case ' ':
+					if jsNeedsSep(prevText, text) {
+						out.WriteByte(' ')
+					}
+				}
 			case tok.wsBefore && jsNeedsSep(prevText, text):
 				out.WriteByte(' ')
 			}
 		}
 		out.Write(text)
+		prevEnds = jsTokenEndsExpr(tokens, i, info, prevEnds)
 		prevText = text
 	}
 
 	return out.Bytes()
+}
+
+// jsRestricted are keywords after which a line break always terminates
+// the statement (restricted productions plus lone-statement keywords).
+var jsRestricted = map[string]bool{
+	"return": true, "break": true, "continue": true, "throw": true,
+	"debugger": true,
+}
+
+// jsNewlineAction decides what replaces a significant line break
+// before token i: ';' where automatic semicolon insertion applied in
+// the original source, ' ' where the break was plain whitespace.
+func jsNewlineAction(tokens []jsToken, i int, prevText []byte, prevEnds bool) byte {
+	tok := &tokens[i]
+
+	if jsRestricted[string(prevText)] {
+		if tok.kind == jsPunct && len(tok.text) == 1 && (tok.text[0] == '}' || tok.text[0] == ';') {
+			return ' '
+		}
+		return ';'
+	}
+	if !prevEnds {
+		return ' '
+	}
+
+	switch tok.kind {
+	case jsIdent:
+		switch string(tok.text) {
+		case "in", "instanceof":
+			return ' ' // binary operators: the expression continues
+		}
+		return ';'
+	case jsString, jsTemplate, jsRegex:
+		return ';'
+	case jsPunct:
+		switch string(tok.text) {
+		case "++", "--", "!", "~", "{":
+			return ';'
+		}
+		return ' ' // operators, closers, '(' and '[' all continue the parse
+	}
+	return ';'
+}
+
+// jsTokenEndsExpr reports whether the token at i can end an
+// expression, making a following line break a potential ASI boundary.
+// prevEnds is whether the token before it could, which decides whether
+// '++'/'--' is postfix.
+func jsTokenEndsExpr(tokens []jsToken, i int, info *jsEmitInfo, prevEnds bool) bool {
+	tok := &tokens[i]
+	switch tok.kind {
+	case jsString, jsTemplate, jsRegex:
+		return true
+	case jsIdent:
+		name := string(tok.text)
+		if !jsKeywords[name] {
+			return true
+		}
+		switch name {
+		case "this", "null", "true", "false":
+			return true
+		}
+		return false
+	case jsPunct:
+		switch string(tok.text) {
+		case "]":
+			return true
+		case ")", "}":
+			if info != nil {
+				return info.exprClose[i]
+			}
+			return true
+		case "++", "--":
+			return prevEnds && !tok.nlBefore // postfix
+		}
+	}
+	return false
 }
 
 // jsNeedsSep reports whether removing the whitespace between the prev

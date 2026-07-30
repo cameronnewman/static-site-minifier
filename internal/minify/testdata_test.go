@@ -20,8 +20,8 @@ type fixture struct {
 }
 
 var fixtures = []fixture{
-	{"lodash", "lodash-4.17.21.js", MediaTypeJS, 80},
-	{"jquery", "jquery-3.7.1.js", MediaTypeJS, 60},
+	{"lodash", "lodash-4.17.21.js", MediaTypeJS, 84},
+	{"jquery", "jquery-3.7.1.js", MediaTypeJS, 64},
 	{"bootstrap", "bootstrap-5.3.3.css", MediaTypeCSS, 10},
 	{"large-html", "large.html", MediaTypeHTML, 20},
 }
