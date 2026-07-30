@@ -1,44 +1,84 @@
-ROOT_FOLDER 		:= $(shell git rev-parse --show-toplevel)
-include 			$(ROOT_FOLDER)/.scripts/make/golang.mk
+# Makefile for static-site-minifier
 
-SHA1				:= $(shell git rev-parse --verify HEAD)
-SHA1_SHORT			:= $(shell git rev-parse --verify --short HEAD)
-VERSION				:= $(shell cat VERSION.txt)
-INTERNAL_BUILD_ID	:= $(shell [ -z "${GITHUB_RUN_NUMBER}" ] && echo "0" || echo ${GITHUB_RUN_NUMBER})
-PWD					:= $(shell pwd)
-VERSION_HASH		:= ${VERSION}.${INTERNAL_BUILD_ID}-${SHA1_SHORT}
-CI					:= $(shell echo ${CI})
+ROOT_FOLDER         := $(shell git rev-parse --show-toplevel)
+include             $(ROOT_FOLDER)/.scripts/golang.mk
+include             $(ROOT_FOLDER)/.scripts/markdown.mk
 
-ENVIRONMENT 		?= local
+SHA1                := $(shell git rev-parse --verify HEAD)
+SHA1_SHORT          := $(shell git rev-parse --verify --short HEAD)
+PWD                 := $(shell pwd)
 
+# Project settings
+PROJECT             ?= static-site-minifier
+BINARY              := builder
+MAIN_PATH           := ./cmd/builder
+MODULE              := github.com/cameronnewman/static-site-minifier
 
 #
 # Default Goals
 #
-.DEFAULT_GOAL		:= VERSION
+.DEFAULT_GOAL       := help
 
 # HELP
 # This will output the help for each task
 # thanks to https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
+.PHONY: help
 help: ## Returns a list of all the make goals
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# VERSION
-#
-#
+.PHONY: version
 version: ## Returns version for build
 	@echo "Build Version: v$(VERSION_HASH)"
 
 #
-# Utils
+# Alias targets (map to go-* targets from golang.mk)
 #
 
-check-ENVIRONMENT: ## Check that the $ENVIRONMENT ENV variable is set.
-ifndef ENVIRONMENT
-	$(error ENVIRONMENT is undefined)
-endif
+.PHONY: build
+build: go-build ## Build the binary
 
-check-APP: ## Check that the $APP ENV variable is set. Needed for golang and ui commands
-ifndef APP
-	$(error APP is undefined)
-endif
+.PHONY: install
+install: go-install ## Install binary to GOBIN
+
+.PHONY: release
+release: go-release ## Build for all platforms
+
+.PHONY: test
+test: go-test ## Run tests
+
+.PHONY: test-cover
+test-cover: go-test-cover ## Run tests with coverage
+
+.PHONY: test-cover-html
+test-cover-html: go-test-cover-html ## Generate HTML coverage report
+
+.PHONY: lint
+lint: go-lint ## Run linters
+
+.PHONY: lint-fix
+lint-fix: go-lint-fix ## Run linters with auto-fix
+
+.PHONY: fmt
+fmt: go-fmt ## Format Go code
+
+.PHONY: fmt-check
+fmt-check: go-fmt-check ## Check if code is formatted
+
+.PHONY: mod
+mod: go-mod ## Run go mod tidy
+
+.PHONY: vet
+vet: go-vet ## Run go vet
+
+.PHONY: govulncheck
+govulncheck: go-govulncheck ## Run govulncheck security scanner
+
+.PHONY: clean
+clean: go-clean ## Remove build artifacts
+
+.PHONY: check
+check: fmt-check vet lint test ## Run all checks
+
+.PHONY: run
+run: build ## Build and run
+	./$(BUILD_DIR)/$(BINARY)

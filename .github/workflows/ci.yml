@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Run golangci-lint
+        run: make lint
+
+      - name: Run markdownlint
+        run: make markdown-lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Run tests
+        run: make test-cover
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7.0.0
+        with:
+          files: coverage/coverage.out
+          fail_ci_if_error: false
+
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install reporters
+        run: |
+          go install gotest.tools/gotestsum@latest
+          go install github.com/boumenot/gocover-cobertura@latest
+
+      - name: Run tests with coverage
+        run: |
+          mkdir -p cov
+          gotestsum --junitfile cov/tests-builder.xml --format pkgname \
+            -- -coverprofile=coverage.out -covermode=atomic ./...
+          gocover-cobertura < coverage.out > cov/coverage-builder.xml
+
+      - name: Aggregate coverage summary
+        # Pinned to reviewed commit SHA per upstream guidance; bump after review.
+        uses: aanantaco/coverage@ab3d55e91fd6563135cad00e2335520c8e0360cf
+        with:
+          input: ./cov
+          output: $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-xml
+          path: cov/
+          retention-days: 7
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Run gosec
+        uses: securego/gosec@v2.28.0
+        with:
+          args: ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test, coverage-report, security]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build release binaries
+        run: make release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: builder-binaries
+          path: bin/
+          retention-days: 7
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Generate version
+        id: version
+        run: |
+          VERSION=$(cat VERSION.txt)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          FULL_VERSION="v${VERSION}.${{ github.run_number }}-${SHORT_SHA}"
+          echo "version=${FULL_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: builder-binaries
+          path: bin/
+
+      - name: Create release archives
+        run: |
+          cd bin
+          for file in builder-*; do
+            if [[ -f "$file" ]]; then
+              chmod +x "$file"
+              tar -czvf "${file}.tar.gz" "$file"
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: bin/*.tar.gz

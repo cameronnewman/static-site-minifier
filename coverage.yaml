@@ -1,0 +1,4 @@
+workspaces:
+  builder:
+    display_name: static-site-minifier
+    strip_prefix: github.com/cameronnewman/static-site-minifier/

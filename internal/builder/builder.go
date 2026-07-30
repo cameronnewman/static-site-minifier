@@ -1,3 +1,5 @@
+// Package builder minifies HTML, CSS and JS files from a source directory
+// into a destination directory, copying all other files as-is.
 package builder
 
 import (
@@ -29,14 +31,17 @@ const (
 	newline = "\n"
 )
 
+// Stats holds aggregate results of a build run.
 type Stats struct {
-	TotalFiles      int
-	ProcessedFiles  int
-	TotalSaved      int64
-	OriginalSize    int64
-	TotalReduction  float64
+	TotalFiles     int
+	ProcessedFiles int
+	TotalSaved     int64
+	OriginalSize   int64
+	TotalReduction float64
 }
 
+// Build walks srcDir, minifying HTML, CSS and JS files and copying all
+// other files into distDir, then logs a summary of the run.
 func Build(srcDir, distDir string, logger *zap.Logger) error {
 	m := minify.New()
 	m.AddFunc(mimeTypeHTML, html.Minify)
@@ -70,7 +75,7 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 		case fileExtHTML, fileExtCSS, fileExtJS:
 			return processMinifiableFile(m, srcPath, destPath, relPath, ext, srcSize, stats, logger)
 		default:
-			return copyFile(srcPath, destPath, relPath, ext, srcSize, logger)
+			return copyFile(srcPath, destPath, relPath, ext, logger)
 		}
 	})
 
@@ -130,7 +135,7 @@ func processMinifiableFile(m *minify.M, srcPath, destPath, relPath, ext string, 
 	return nil
 }
 
-func copyFile(srcPath, destPath, relPath, ext string, srcSize int64, logger *zap.Logger) error {
+func copyFile(srcPath, destPath, relPath, ext string, logger *zap.Logger) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); err != nil {
 		return err
 	}

@@ -1,3 +1,5 @@
+// Package server serves a source directory over HTTP with live reload,
+// pushing a reload message to connected browsers when files change.
 package server
 
 import (
@@ -15,11 +17,11 @@ import (
 )
 
 const (
-	mimeTypeHTML          = "text/html"
-	httpHeaderContentType = "Content-Type"
-	defaultFile           = "index.html"
-	pathSeparator         = string(os.PathSeparator)
-	fileExtHTML           = ".html"
+	mimeTypeHTML           = "text/html"
+	httpHeaderContentType  = "Content-Type"
+	defaultFile            = "index.html"
+	pathSeparator          = string(os.PathSeparator)
+	fileExtHTML            = ".html"
 	webSocketMessageReload = "reload"
 )
 
@@ -28,6 +30,8 @@ type webSocketClient struct {
 	mu   sync.Mutex
 }
 
+// Serve serves srcDir on the given port, watching it for changes and
+// reloading connected browsers over a websocket when files change.
 func Serve(srcDir string, port int, logger *zap.Logger) {
 	reload := make(chan struct{})
 
@@ -77,6 +81,9 @@ func Serve(srcDir string, port int, logger *zap.Logger) {
 	}()
 
 	err = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 		if d.Name() == ".DS_Store" {
 			logger.Debug("Ignoring file", zap.String("path", path))
 			return nil
@@ -120,7 +127,7 @@ func wsHandler(reload chan struct{}, logger *zap.Logger) http.Handler {
 	var clients sync.Map
 
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: func(_ *http.Request) bool { return true },
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
