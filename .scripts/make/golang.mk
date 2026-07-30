@@ -2,9 +2,9 @@
 BASE_IMAGE          := scratch
 
 ENVIRONMENT         ?= CI
-GOLANG_BUILD_IMAGE  ?= golang:1.24.4-bullseye
-GOLANG_LINT_IMAGE   := golangci/golangci-lint:v2.0.2
-GOLANG_GOSEC_IMAGE  := securego/gosec:2.22.3
+GOLANG_BUILD_IMAGE  ?= golang:1.26.5-trixie
+GOLANG_LINT_IMAGE   := golangci/golangci-lint:v2.12.2
+GOLANG_GOSEC_IMAGE  := securego/gosec:2.28.0
 
 APP					:= builder
 

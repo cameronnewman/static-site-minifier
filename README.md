@@ -10,7 +10,7 @@ A Go-based static site builder that minifies HTML, CSS, and JavaScript files wit
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.26+
 
 ## Usage
 
