@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
@@ -20,9 +22,10 @@ const (
 	mimeTypeHTML           = "text/html"
 	httpHeaderContentType  = "Content-Type"
 	defaultFile            = "index.html"
-	pathSeparator          = string(os.PathSeparator)
 	fileExtHTML            = ".html"
 	webSocketMessageReload = "reload"
+
+	readHeaderTimeout = 5 * time.Second
 )
 
 type webSocketClient struct {
@@ -35,24 +38,30 @@ type webSocketClient struct {
 func Serve(srcDir string, port int, logger *zap.Logger) {
 	reload := make(chan struct{})
 
+	// Scope all file access to srcDir so requests can never escape it.
+	root, err := os.OpenRoot(srcDir)
+	if err != nil {
+		logger.Fatal("Failed to open Source Directory", zap.String("src", srcDir), zap.Error(err))
+	}
+
 	http.Handle("/__ws", wsHandler(reload, logger))
 
-	http.HandleFunc(pathSeparator, func(w http.ResponseWriter, r *http.Request) {
-		path := filepath.Join(srcDir, r.URL.Path)
-		if strings.HasSuffix(r.URL.Path, pathSeparator) {
-			path = filepath.Join(path, defaultFile)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if rel == "" || strings.HasSuffix(r.URL.Path, "/") {
+			rel = path.Join(rel, defaultFile)
 		}
 
-		info, err := os.Stat(path)
+		info, err := root.Stat(rel)
 		if err != nil || info.IsDir() {
-			http.FileServer(http.Dir(srcDir)).ServeHTTP(w, r)
+			http.FileServerFS(root.FS()).ServeHTTP(w, r)
 			return
 		}
 
-		if strings.HasSuffix(path, fileExtHTML) {
-			content, err := os.ReadFile(path)
+		if strings.HasSuffix(rel, fileExtHTML) {
+			content, err := root.ReadFile(rel)
 			if err != nil {
-				http.Error(w, "Internal Server Error", 500)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
 			injection := `<script>
@@ -61,12 +70,13 @@ func Serve(srcDir string, port int, logger *zap.Logger) {
 			</script>`
 			content = append(content, []byte("\n"+injection)...)
 			w.Header().Set(httpHeaderContentType, mimeTypeHTML)
+			// #nosec G705 -- serving the user's own local HTML files is the purpose of this dev server
 			if _, err = w.Write(content); err != nil {
-				http.Error(w, "Internal Server Error", 500)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
 		} else {
-			http.ServeFile(w, r, path)
+			http.ServeFileFS(w, r, root.FS(), rel)
 		}
 	})
 
@@ -117,8 +127,11 @@ func Serve(srcDir string, port int, logger *zap.Logger) {
 
 	logger.Info(fmt.Sprintf("Serving '%s' on http://localhost:%d...", srcDir, port))
 
-	err = http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-	if err != nil {
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		logger.Fatal("Error starting server", zap.Error(err))
 	}
 }

@@ -2,6 +2,8 @@ module github.com/cameronnewman/static-site-minifier
 
 go 1.26.0
 
+toolchain go1.26.5
+
 require (
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/fsnotify/fsnotify v1.10.1
