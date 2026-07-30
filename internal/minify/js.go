@@ -18,7 +18,17 @@ const (
 	jsTemplate
 	jsRegex
 	jsPunct
+	jsBanner // license comment (/*!) kept in the output
 )
+
+// jsToken is a single scanned token plus the whitespace that preceded
+// it in the source.
+type jsToken struct {
+	kind     jsTokenKind
+	text     []byte
+	nlBefore bool // a line break separated this token from the previous
+	wsBefore bool // other whitespace separated this token from the previous
+}
 
 // jsRegexKeywords are keywords after which a '/' starts a regular
 // expression rather than a division.
@@ -32,30 +42,39 @@ var jsRegexKeywords = map[string]bool{
 // are removed and whitespace is collapsed, while line breaks between
 // tokens are preserved so automatic semicolon insertion is never
 // affected. Strings, template literals (including nested expressions)
-// and regular expression literals are preserved verbatim.
+// and regular expression literals are preserved verbatim. Where the
+// code stays within an analysable subset, function-local variables
+// are additionally renamed to shorter names (see mangleJS).
 func JS(in []byte) ([]byte, error) {
-	var out bytes.Buffer
-	out.Grow(len(in))
+	tokens, err := tokenizeJS(in)
+	if err != nil {
+		return nil, err
+	}
+
+	renames := mangleJS(tokens)
+
+	return emitJS(tokens, renames), nil
+}
+
+// tokenizeJS scans in into tokens, dropping comments (except license
+// banners) and recording the whitespace between tokens.
+func tokenizeJS(in []byte) ([]jsToken, error) {
+	var tokens []jsToken
 
 	i, n := 0, len(in)
 	sawNewline := false
 	pendingWS := false
-	prevKind := jsPunct
-	havePrev := false
-	var prevText []byte
 
-	emit := func(kind jsTokenKind, text []byte) {
-		if out.Len() > 0 {
-			switch {
-			case sawNewline:
-				out.WriteByte('\n')
-			case pendingWS && jsNeedsSep(prevText, text):
-				out.WriteByte(' ')
-			}
-		}
-		out.Write(text)
-		prevKind, prevText, havePrev = kind, text, true
+	push := func(kind jsTokenKind, text []byte) {
+		tokens = append(tokens, jsToken{kind: kind, text: text, nlBefore: sawNewline, wsBefore: pendingWS})
 		sawNewline, pendingWS = false, false
+	}
+
+	prev := func() *jsToken {
+		if len(tokens) == 0 {
+			return nil
+		}
+		return &tokens[len(tokens)-1]
 	}
 
 	for i < n {
@@ -86,13 +105,9 @@ func JS(in []byte) ([]byte, error) {
 			}
 			switch {
 			case i+2 < n && in[i+2] == '!':
-				// License banners (/*!) are kept for compliance. They do
-				// not change the token state around them.
-				if out.Len() > 0 {
-					out.WriteByte('\n')
-				}
-				out.Write(in[i : i+2+end+2])
-				sawNewline, pendingWS = true, false
+				// License banners (/*!) are kept for compliance.
+				push(jsBanner, in[i:i+2+end+2])
+				sawNewline = true
 			case bytes.IndexByte(in[i:i+2+end], '\n') >= 0:
 				sawNewline = true
 			default:
@@ -108,23 +123,23 @@ func JS(in []byte) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			emit(jsString, in[i:j])
+			push(jsString, in[i:j])
 			i = j
 		case c == '`':
 			j, err := scanJSTemplate(in, i)
 			if err != nil {
 				return nil, err
 			}
-			emit(jsTemplate, in[i:j])
+			push(jsTemplate, in[i:j])
 			i = j
-		case c == '/' && jsRegexAllowed(havePrev, prevKind, prevText):
+		case c == '/' && jsRegexAllowedTok(prev()):
 			j, ok := scanJSRegex(in, i)
 			if ok {
-				emit(jsRegex, in[i:j])
+				push(jsRegex, in[i:j])
 				i = j
 			} else {
 				// Not a valid regex after all; treat as division.
-				emit(jsPunct, in[i:i+1])
+				push(jsPunct, in[i:i+1])
 				i++
 			}
 		case isJSIdentChar(c):
@@ -132,18 +147,57 @@ func JS(in []byte) ([]byte, error) {
 			for j < n && isJSIdentChar(in[j]) {
 				j++
 			}
-			emit(jsIdent, in[i:j])
+			push(jsIdent, in[i:j])
 			i = j
 		case (c == '+' || c == '-') && i+1 < n && in[i+1] == c:
-			emit(jsPunct, in[i:i+2])
+			push(jsPunct, in[i:i+2])
 			i += 2
 		default:
-			emit(jsPunct, in[i:i+1])
+			push(jsPunct, in[i:i+1])
 			i++
 		}
 	}
 
-	return out.Bytes(), nil
+	return tokens, nil
+}
+
+// emitJS renders tokens with minimal whitespace, applying renames to
+// eligible identifier tokens. renames maps token index to replacement.
+func emitJS(tokens []jsToken, renames map[int][]byte) []byte {
+	var out bytes.Buffer
+	var prevText []byte
+
+	for i := range tokens {
+		tok := &tokens[i]
+
+		if tok.kind == jsBanner {
+			if out.Len() > 0 {
+				out.WriteByte('\n')
+			}
+			out.Write(tok.text)
+			out.WriteByte('\n')
+			prevText = nil
+			continue
+		}
+
+		text := tok.text
+		if r, ok := renames[i]; ok {
+			text = r
+		}
+
+		if out.Len() > 0 && prevText != nil {
+			switch {
+			case tok.nlBefore:
+				out.WriteByte('\n')
+			case tok.wsBefore && jsNeedsSep(prevText, text):
+				out.WriteByte(' ')
+			}
+		}
+		out.Write(text)
+		prevText = text
+	}
+
+	return out.Bytes()
 }
 
 // jsNeedsSep reports whether removing the whitespace between the prev
@@ -166,22 +220,22 @@ func jsNeedsSep(prev, next []byte) bool {
 	return false
 }
 
-// jsRegexAllowed reports whether a '/' in the current position starts
+// jsRegexAllowedTok reports whether a '/' after the given token starts
 // a regular expression literal rather than a division operator.
-func jsRegexAllowed(havePrev bool, kind jsTokenKind, text []byte) bool {
-	if !havePrev {
+func jsRegexAllowedTok(prev *jsToken) bool {
+	if prev == nil || prev.kind == jsBanner {
 		return true
 	}
-	switch kind {
+	switch prev.kind {
 	case jsString, jsTemplate, jsRegex:
 		return false
 	case jsIdent:
-		if text[0] >= '0' && text[0] <= '9' {
+		if prev.text[0] >= '0' && prev.text[0] <= '9' {
 			return false // number
 		}
-		return jsRegexKeywords[string(text)]
+		return jsRegexKeywords[string(prev.text)]
 	case jsPunct:
-		switch string(text) {
+		switch string(prev.text) {
 		case ")", "]", "}", "++", "--":
 			return false
 		}

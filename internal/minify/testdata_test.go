@@ -20,8 +20,8 @@ type fixture struct {
 }
 
 var fixtures = []fixture{
-	{"lodash", "lodash-4.17.21.js", MediaTypeJS, 60},
-	{"jquery", "jquery-3.7.1.js", MediaTypeJS, 40},
+	{"lodash", "lodash-4.17.21.js", MediaTypeJS, 80},
+	{"jquery", "jquery-3.7.1.js", MediaTypeJS, 60},
 	{"bootstrap", "bootstrap-5.3.3.css", MediaTypeCSS, 10},
 	{"large-html", "large.html", MediaTypeHTML, 20},
 }
@@ -166,20 +166,57 @@ func TestFixtureJSCompatibility(t *testing.T) {
 		}
 	}
 
+	// Differential battery: the minified (and mangled) lodash must
+	// produce byte-identical results to the original across a broad
+	// range of operations.
+	original, err := filepath.Abs(filepath.Join("testdata", "lodash-4.17.21.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	script := fmt.Sprintf(`
 const assert = require('assert');
 const _ = require(%q);
-assert.deepStrictEqual(_.chunk(['a','b','c','d'], 2), [['a','b'],['c','d']]);
-assert.deepStrictEqual(_.map([1,2,3], n => n * 2), [2,4,6]);
-assert.strictEqual(_.camelCase('Foo Bar'), 'fooBar');
-assert.strictEqual(_.template('hello <%%= name %%>')({name: 'world'}), 'hello world');
-assert.deepStrictEqual(_.uniq([1,1,2,3,3]), [1,2,3]);
-assert.strictEqual(_.escape('a & b < c'), 'a &amp; b &lt; c');
-assert.deepStrictEqual(_.sortBy([{a:3},{a:1},{a:2}], 'a'), [{a:1},{a:2},{a:3}]);
-assert.strictEqual(_.VERSION, '4.17.21');
+const orig = require(%q);
+const data = [{a:3,b:'x'},{a:1,b:'y'},{a:2,b:'z'}];
+const cases = [
+  l => l.chunk(['a','b','c','d','e'], 2),
+  l => l.map([1,2,3], n => n * 2),
+  l => l.filter(data, o => o.a > 1),
+  l => l.sortBy(data, 'a'),
+  l => l.groupBy([6.1, 4.2, 6.3], Math.floor),
+  l => l.camelCase('Foo Bar_baz-qux'),
+  l => l.kebabCase('fooBarBaz'),
+  l => l.template('hi <%%= x %%> <%% if (y) { %%>Y<%% } %%>')({x: 1, y: true}),
+  l => l.cloneDeep({a: {b: [1, {c: 2}]}}),
+  l => l.merge({a: {b: 1}}, {a: {c: 2}}),
+  l => l.uniqBy([{x:1},{x:2},{x:1}], 'x'),
+  l => l.flattenDeep([1,[2,[3,[4]]]]),
+  l => l.zipObject(['a','b'], [1,2]),
+  l => l.escape('<b>&"</b>'),
+  l => l.unescape('&lt;b&gt;'),
+  l => l.padStart('5', 3, '0'),
+  l => l.range(1, 8, 2),
+  l => l.get({a:[{b:{c:3}}]}, 'a[0].b.c'),
+  l => l.set({}, 'a.b.c', 7),
+  l => l.isEqual({a:[1,2]}, {a:[1,2]}),
+  l => l.words('fred, barney, & pebbles'),
+  l => l.memoize(x => x * 2)(21),
+  l => l.curry((a,b,c) => a+b+c)(1)(2)(3),
+  l => l.partition([1,2,3,4], n => n %% 2),
+  l => l.invert({a:'1', b:'2'}),
+  l => l.truncate('hi-diddly-ho there, neighborino', {length: 24}),
+  l => l.deburr('deja vu'),
+  l => l.times(3, String),
+  l => l.mean([4, 2, 8, 6]),
+  l => l.orderBy(data, ['a'], ['desc']),
+];
+cases.forEach((fn, i) => {
+  assert.deepStrictEqual(fn(_), fn(orig), 'case ' + i + ' diverged');
+});
+assert.strictEqual(_.VERSION, orig.VERSION);
 const jqFactory = require(%q);
 assert.strictEqual(typeof jqFactory, 'function');
-`, minified["lodash-4.17.21.js"], minified["jquery-3.7.1.js"])
+`, minified["lodash-4.17.21.js"], original, minified["jquery-3.7.1.js"])
 
 	if output, err := exec.Command(nodePath, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("minified libraries failed functional tests: %v\n%s", err, output)
