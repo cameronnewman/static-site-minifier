@@ -1,3 +1,4 @@
+// Package logger provides a preconfigured zap console logger.
 package logger
 
 import (
@@ -5,6 +6,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// New returns a console logger writing to stdout, at debug level when
+// debug is true and info level otherwise.
 func New(debug bool) (*zap.Logger, error) {
 	logLevel := zap.NewAtomicLevelAt(zap.InfoLevel)
 

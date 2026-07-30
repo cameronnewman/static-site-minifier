@@ -1,3 +1,5 @@
+// Command builder builds a minified static site or serves it locally
+// with live reload.
 package main
 
 import (

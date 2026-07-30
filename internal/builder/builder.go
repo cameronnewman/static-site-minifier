@@ -1,3 +1,5 @@
+// Package builder minifies HTML, CSS and JS files from a source directory
+// into a destination directory, copying all other files as-is.
 package builder
 
 import (
@@ -6,6 +8,7 @@ import (
 	"io/fs"
 	"mime"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -29,14 +32,17 @@ const (
 	newline = "\n"
 )
 
+// Stats holds aggregate results of a build run.
 type Stats struct {
-	TotalFiles      int
-	ProcessedFiles  int
-	TotalSaved      int64
-	OriginalSize    int64
-	TotalReduction  float64
+	TotalFiles     int
+	ProcessedFiles int
+	TotalSaved     int64
+	OriginalSize   int64
+	TotalReduction float64
 }
 
+// Build walks srcDir, minifying HTML, CSS and JS files and copying all
+// other files into distDir, then logs a summary of the run.
 func Build(srcDir, distDir string, logger *zap.Logger) error {
 	m := minify.New()
 	m.AddFunc(mimeTypeHTML, html.Minify)
@@ -45,11 +51,33 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 
 	stats := &Stats{}
 
-	if err := os.MkdirAll(distDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(distDir, 0o750); err != nil {
 		return err
 	}
 
-	err := filepath.WalkDir(srcDir, func(srcPath string, d fs.DirEntry, err error) error {
+	// Scope all reads to srcDir and all writes to distDir so a crafted
+	// file name can never escape either directory.
+	srcRoot, err := os.OpenRoot(srcDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := srcRoot.Close(); err != nil {
+			logger.Error("Error closing source root", zap.String("src", srcDir), zap.Error(err))
+		}
+	}()
+
+	destRoot, err := os.OpenRoot(distDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := destRoot.Close(); err != nil {
+			logger.Error("Error closing destination root", zap.String("dest", distDir), zap.Error(err))
+		}
+	}()
+
+	err = fs.WalkDir(srcRoot.FS(), ".", func(relPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -57,20 +85,21 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 			return nil
 		}
 
-		relPath, _ := filepath.Rel(srcDir, srcPath)
-		destPath := filepath.Join(distDir, relPath)
-		ext := strings.ToLower(filepath.Ext(srcPath))
+		ext := strings.ToLower(path.Ext(relPath))
 
-		srcInfo, _ := os.Stat(srcPath)
-		srcSize := srcInfo.Size()
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		srcSize := info.Size()
 		stats.TotalFiles++
 		stats.OriginalSize += srcSize
 
 		switch ext {
 		case fileExtHTML, fileExtCSS, fileExtJS:
-			return processMinifiableFile(m, srcPath, destPath, relPath, ext, srcSize, stats, logger)
+			return processMinifiableFile(m, srcRoot, destRoot, relPath, ext, srcSize, stats, logger)
 		default:
-			return copyFile(srcPath, destPath, relPath, ext, srcSize, logger)
+			return copyFile(srcRoot, destRoot, relPath, ext, logger)
 		}
 	})
 
@@ -88,10 +117,10 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 	return nil
 }
 
-func processMinifiableFile(m *minify.M, srcPath, destPath, relPath, ext string, srcSize int64, stats *Stats, logger *zap.Logger) error {
+func processMinifiableFile(m *minify.M, srcRoot, destRoot *os.Root, relPath, ext string, srcSize int64, stats *Stats, logger *zap.Logger) error {
 	mediaType := getMediaType(ext)
 
-	in, err := os.ReadFile(srcPath)
+	in, err := srcRoot.ReadFile(relPath)
 	if err != nil {
 		return err
 	}
@@ -106,11 +135,11 @@ func processMinifiableFile(m *minify.M, srcPath, destPath, relPath, ext string, 
 		minified = append(minified, []byte(generateTimestampHTMLComment())...)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); err != nil {
+	if err := mkDestDir(destRoot, relPath); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(destPath, minified, 0644); err != nil {
+	if err := destRoot.WriteFile(relPath, minified, 0o644); err != nil {
 		return err
 	}
 
@@ -130,32 +159,35 @@ func processMinifiableFile(m *minify.M, srcPath, destPath, relPath, ext string, 
 	return nil
 }
 
-func copyFile(srcPath, destPath, relPath, ext string, srcSize int64, logger *zap.Logger) error {
-	if err := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); err != nil {
+func copyFile(srcRoot, destRoot *os.Root, relPath, ext string, logger *zap.Logger) error {
+	if err := mkDestDir(destRoot, relPath); err != nil {
 		return err
 	}
 
-	srcFile, err := os.Open(srcPath)
+	srcFile, err := srcRoot.Open(relPath)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err := srcFile.Close(); err != nil {
-			logger.Error("Error closing source file", zap.String("src_path", srcPath), zap.Error(err))
+			logger.Error("Error closing source file", zap.String("src_path", relPath), zap.Error(err))
 		}
 	}()
 
-	dstFile, err := os.Create(destPath)
+	dstFile, err := destRoot.Create(relPath)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err := dstFile.Close(); err != nil {
-			logger.Error("Error closing destination file", zap.String("dest_path", destPath), zap.Error(err))
+			logger.Error("Error closing destination file", zap.String("dest_path", relPath), zap.Error(err))
 		}
 	}()
 
-	size, _ := io.Copy(dstFile, srcFile)
+	size, err := io.Copy(dstFile, srcFile)
+	if err != nil {
+		return err
+	}
 
 	logger.Info("[Copied]",
 		zap.String("path", relPath),
@@ -163,6 +195,15 @@ func copyFile(srcPath, destPath, relPath, ext string, srcSize int64, logger *zap
 		zap.Int64("source_bytes", size))
 
 	return nil
+}
+
+// mkDestDir creates the parent directories of relPath inside destRoot.
+func mkDestDir(destRoot *os.Root, relPath string) error {
+	dir := filepath.Dir(filepath.FromSlash(relPath))
+	if dir == "." {
+		return nil
+	}
+	return destRoot.MkdirAll(dir, 0o750)
 }
 
 func getMediaType(ext string) string {
