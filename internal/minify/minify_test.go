@@ -36,6 +36,7 @@ func TestCSS(t *testing.T) {
 	}{
 		{"whitespace", "a  {  color :  red ;  }", "a{color :red}"},
 		{"comments", "/* note */ a { color: red; }", "a{color:red}"},
+		{"license banner kept", "/*! MIT */ a { color: red; }", "/*! MIT */ a{color:red}"},
 		{"trailing semicolon", "a { color: red; margin: 0; }", "a{color:red;margin:0}"},
 		{"duplicate semicolons", "a { color: red;; }", "a{color:red}"},
 		{"string preserved", `a::before { content: "  hi  "; }`, `a::before{content:"  hi  "}`},
@@ -74,6 +75,7 @@ func TestJS(t *testing.T) {
 		{"whitespace", "var  x  =  1 ;", "var x=1;"},
 		{"line comment", "var x = 1; // note\nvar y = 2;", "var x=1;\nvar y=2;"},
 		{"block comment", "var x = /* note */ 1;", "var x=1;"},
+		{"license banner kept", "/*! MIT License */\nvar x = 1;", "/*! MIT License */\nvar x=1;"},
 		{"block comment with newline", "var x = 1; /* a\nb */ var y = 2;", "var x=1;\nvar y=2;"},
 		{"newlines preserved", "let a = 1\nlet b = 2", "let a=1\nlet b=2"},
 		{"blank lines collapsed", "let a = 1\n\n\nlet b = 2", "let a=1\nlet b=2"},

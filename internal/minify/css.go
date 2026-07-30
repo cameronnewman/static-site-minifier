@@ -52,15 +52,21 @@ func CSS(in []byte) ([]byte, error) {
 	for i < n {
 		c := in[i]
 
-		// Comments act as whitespace.
+		// Comments act as whitespace; license banners (/*!) are kept.
 		if c == '/' && i+1 < n && in[i+1] == '*' {
 			end := bytes.Index(in[i+2:], []byte("*/"))
 			if end < 0 {
 				i = n
-			} else {
-				i += 2 + end + 2
+				pendingSpace = true
+				continue
 			}
-			pendingSpace = true
+			if i+2 < n && in[i+2] == '!' {
+				flushSpace(c)
+				out.Write(in[i : i+2+end+2])
+			} else {
+				pendingSpace = true
+			}
+			i += 2 + end + 2
 			continue
 		}
 

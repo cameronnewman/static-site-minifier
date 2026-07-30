@@ -84,9 +84,18 @@ func JS(in []byte) ([]byte, error) {
 			if end < 0 {
 				return nil, fmt.Errorf("%w: comment at offset %d", ErrUnterminated, i)
 			}
-			if bytes.IndexByte(in[i:i+2+end], '\n') >= 0 {
+			switch {
+			case i+2 < n && in[i+2] == '!':
+				// License banners (/*!) are kept for compliance. They do
+				// not change the token state around them.
+				if out.Len() > 0 {
+					out.WriteByte('\n')
+				}
+				out.Write(in[i : i+2+end+2])
+				sawNewline, pendingWS = true, false
+			case bytes.IndexByte(in[i:i+2+end], '\n') >= 0:
 				sawNewline = true
-			} else {
+			default:
 				pendingWS = true
 			}
 			i += 2 + end + 2

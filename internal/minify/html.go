@@ -58,8 +58,16 @@ func HTML(in []byte) ([]byte, error) {
 }
 
 // writeCollapsed writes text with whitespace runs collapsed to a
-// single space.
+// single space. A space is not emitted when the output already ends
+// with one (for example after a removed comment).
 func writeCollapsed(out *bytes.Buffer, text []byte) {
+	writeSpace := func() {
+		if out.Len() > 0 && out.Bytes()[out.Len()-1] == ' ' {
+			return
+		}
+		out.WriteByte(' ')
+	}
+
 	inSpace := false
 	for _, c := range text {
 		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' {
@@ -67,13 +75,13 @@ func writeCollapsed(out *bytes.Buffer, text []byte) {
 			continue
 		}
 		if inSpace {
-			out.WriteByte(' ')
+			writeSpace()
 			inSpace = false
 		}
 		out.WriteByte(c)
 	}
 	if inSpace {
-		out.WriteByte(' ')
+		writeSpace()
 	}
 }
 
