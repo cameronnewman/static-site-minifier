@@ -13,18 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tdewolff/minify/v2"
-	"github.com/tdewolff/minify/v2/css"
-	"github.com/tdewolff/minify/v2/html"
-	"github.com/tdewolff/minify/v2/js"
+	"github.com/cameronnewman/static-site-minifier/internal/minify"
 	"go.uber.org/zap"
 )
 
 const (
-	mimeTypeHTML = "text/html"
-	mimeTypeCSS  = "text/css"
-	mimeTypeJS   = "application/javascript"
-
 	fileExtHTML = ".html"
 	fileExtCSS  = ".css"
 	fileExtJS   = ".js"
@@ -44,11 +37,6 @@ type Stats struct {
 // Build walks srcDir, minifying HTML, CSS and JS files and copying all
 // other files into distDir, then logs a summary of the run.
 func Build(srcDir, distDir string, logger *zap.Logger) error {
-	m := minify.New()
-	m.AddFunc(mimeTypeHTML, html.Minify)
-	m.AddFunc(mimeTypeCSS, css.Minify)
-	m.AddFunc(mimeTypeJS, js.Minify)
-
 	stats := &Stats{}
 
 	if err := os.MkdirAll(distDir, 0o750); err != nil {
@@ -97,7 +85,7 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 
 		switch ext {
 		case fileExtHTML, fileExtCSS, fileExtJS:
-			return processMinifiableFile(m, srcRoot, destRoot, relPath, ext, srcSize, stats, logger)
+			return processMinifiableFile(srcRoot, destRoot, relPath, ext, srcSize, stats, logger)
 		default:
 			return copyFile(srcRoot, destRoot, relPath, ext, logger)
 		}
@@ -117,7 +105,7 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 	return nil
 }
 
-func processMinifiableFile(m *minify.M, srcRoot, destRoot *os.Root, relPath, ext string, srcSize int64, stats *Stats, logger *zap.Logger) error {
+func processMinifiableFile(srcRoot, destRoot *os.Root, relPath, ext string, srcSize int64, stats *Stats, logger *zap.Logger) error {
 	mediaType := getMediaType(ext)
 
 	in, err := srcRoot.ReadFile(relPath)
@@ -125,9 +113,9 @@ func processMinifiableFile(m *minify.M, srcRoot, destRoot *os.Root, relPath, ext
 		return err
 	}
 
-	minified, err := m.Bytes(mediaType, in)
+	minified, err := minify.Bytes(mediaType, in)
 	if err != nil {
-		return err
+		return fmt.Errorf("minifying %s: %w", relPath, err)
 	}
 
 	if ext == fileExtHTML {
@@ -209,11 +197,11 @@ func mkDestDir(destRoot *os.Root, relPath string) error {
 func getMediaType(ext string) string {
 	switch ext {
 	case fileExtHTML:
-		return mimeTypeHTML
+		return minify.MediaTypeHTML
 	case fileExtCSS:
-		return mimeTypeCSS
+		return minify.MediaTypeCSS
 	case fileExtJS:
-		return mimeTypeJS
+		return minify.MediaTypeJS
 	default:
 		return ""
 	}
