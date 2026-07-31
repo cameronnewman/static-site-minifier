@@ -108,10 +108,30 @@ jobs:
         with:
           args: ./...
 
+  action-test:
+    name: Action Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Minify the example site with the action
+        uses: ./
+        with:
+          src: test/src
+          dest: action-out
+
+      - name: Verify minified output
+        run: |
+          test -s action-out/index.html
+          test -s action-out/css/app.css
+          test -s action-out/img/bg-unsplash.jpg
+          grep -q "minified at" action-out/index.html
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage-report, security]
+    needs: [lint, test, coverage-report, security, action-test]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
