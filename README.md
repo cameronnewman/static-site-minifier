@@ -94,6 +94,26 @@ The `v1` tag always points at the latest release. Pin a specific
 release with `version: v0.3.1-abc1234` (defaults to `latest`). Works
 on Linux, macOS, and Windows runners, including ARM.
 
+The action reports the release tag it actually downloaded in its
+`version` output:
+
+```yaml
+  - uses: aanantaco/static-site-minifier@v1
+    id: minify
+  - run: echo "minified with ${{ steps.minify.outputs.version }}"
+```
+
+### Releasing
+
+Every push to `main` publishes a GitHub release with binaries for all
+platforms and moves the `v1` tag to it, so action users are always on
+the latest release. The GitHub Marketplace listing is the one thing
+releases cannot update automatically: GitHub only lists versions that
+were published to the Marketplace by hand (edit the release, tick
+"Publish this Action to the GitHub Marketplace", update). Do that for
+milestone releases; the moving `v1` tag keeps users on current code
+either way.
+
 ## Usage
 
 The `builder` binary has three subcommands:

@@ -116,6 +116,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Minify the example site with the action
+        id: minify
         uses: ./
         with:
           src: test/src
@@ -123,6 +124,8 @@ jobs:
 
       - name: Verify minified output
         run: |
+          echo "action resolved release: ${{ steps.minify.outputs.version }}"
+          test -n "${{ steps.minify.outputs.version }}"
           test -s action-out/index.html
           test -s action-out/css/app.css
           test -s action-out/img/bg-unsplash.jpg
