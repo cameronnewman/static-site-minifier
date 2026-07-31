@@ -69,12 +69,12 @@ make build          # binary in bin/builder
 Or install straight into your `GOBIN`:
 
 ```shell
-go install github.com/cameronnewman/static-site-minifier/cmd/builder@latest
+go install github.com/aanantaco/static-site-minifier/cmd/builder@latest
 ```
 
 Pre-built binaries for Linux (amd64, arm64, arm), macOS (amd64,
 arm64), and Windows are attached to each
-[GitHub release](https://github.com/cameronnewman/static-site-minifier/releases).
+[GitHub release](https://github.com/aanantaco/static-site-minifier/releases).
 
 ## GitHub Action
 
@@ -84,7 +84,7 @@ a prebuilt binary from the releases and runs it:
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: cameronnewman/static-site-minifier@main
+  - uses: aanantaco/static-site-minifier@main
     with:
       src: src    # source directory (default: src)
       dest: dist  # output directory (default: dist)

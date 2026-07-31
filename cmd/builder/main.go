@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 
+	"github.com/aanantaco/static-site-minifier/internal/builder"
+	"github.com/aanantaco/static-site-minifier/internal/logger"
+	"github.com/aanantaco/static-site-minifier/internal/server"
 	"github.com/caarlos0/env/v11"
-	"github.com/cameronnewman/static-site-minifier/internal/builder"
-	"github.com/cameronnewman/static-site-minifier/internal/logger"
-	"github.com/cameronnewman/static-site-minifier/internal/server"
 	"go.uber.org/zap"
 )
 

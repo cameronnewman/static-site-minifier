@@ -12,7 +12,7 @@ PWD                 := $(shell pwd)
 PROJECT             ?= static-site-minifier
 BINARY              := builder
 MAIN_PATH           := ./cmd/builder
-MODULE              := github.com/cameronnewman/static-site-minifier
+MODULE              := github.com/aanantaco/static-site-minifier
 
 #
 # Default Goals

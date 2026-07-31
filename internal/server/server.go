@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cameronnewman/static-site-minifier/internal/watcher"
-	"github.com/cameronnewman/static-site-minifier/internal/websocket"
+	"github.com/aanantaco/static-site-minifier/internal/watcher"
+	"github.com/aanantaco/static-site-minifier/internal/websocket"
 	"go.uber.org/zap"
 )
 
