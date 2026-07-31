@@ -28,12 +28,15 @@ import (
 // emitter remove line breaks safely (see emitJS) and records safe
 // literal shortenings (true -> !0, false -> !1, undefined -> void 0).
 func mangleJS(tokens []jsToken) (map[int][]byte, *jsEmitInfo) {
+	hint := len(tokens)/4 + 16
 	a := &jsAnalysis{
 		root:     &jsScope{},
-		occCount: map[string]int{},
-		fresh:    map[string]bool{},
-		info:     &jsEmitInfo{exprClose: map[int]bool{}},
+		occCount: make(map[string]int, hint/4),
+		fresh:    make(map[string]bool, hint/4),
+		info:     &jsEmitInfo{exprClose: make(map[int]bool, hint)},
 		subs:     map[int][]byte{},
+		occs:     make([]jsSite, 0, hint),
+		declared: make([]jsSite, 0, hint/8+8),
 	}
 	a.scope = a.root
 	a.run(tokens)
