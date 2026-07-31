@@ -65,8 +65,11 @@ runs:
           # fails and we fall back to the newest release that has this
           # asset.
           probe="https://github.com/${repo}/releases/latest/download/${asset}.tar.gz"
+          # awk must consume the whole stream: exiting at the first
+          # match breaks the pipe, which pipefail turns into a bogus
+          # probe failure.
           url=$(curl -fsI --retry 3 --retry-delay 2 "$probe" \
-            | tr -d '\r' | awk 'tolower($1) == "location:" { print $2; exit }') || url=""
+            | awk 'tolower($1) == "location:" { loc = $2 } END { sub(/\r$/, "", loc); print loc }') || url=""
           case "$url" in
             *"/releases/download/"*) ;;
             *) url="" ;;
