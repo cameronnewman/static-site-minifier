@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,50 @@ func TestBuild(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dist, ".hidden")); !os.IsNotExist(err) {
 		t.Error("dot-file should not have been copied")
+	}
+}
+
+func TestBuildManyFilesConcurrently(t *testing.T) {
+	src := t.TempDir()
+	dist := filepath.Join(t.TempDir(), "dist")
+
+	// Enough files to keep every worker busy; run under -race to catch
+	// any unsynchronized state.
+	const perKind = 30
+	for i := 0; i < perKind; i++ {
+		writeFile(t, src, fmt.Sprintf("pages/page%02d.html", i), "<p>  page  </p>")
+		writeFile(t, src, fmt.Sprintf("styles/style%02d.css", i), "a {  color:  red;  }")
+		writeFile(t, src, fmt.Sprintf("scripts/script%02d.js", i), "(function(){ var localVar = 1; return localVar; }());")
+		writeFile(t, src, fmt.Sprintf("assets/blob%02d.bin", i), "\x00binary")
+	}
+
+	if err := Build(src, dist, testLogger()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	for i := 0; i < perKind; i++ {
+		for _, name := range []string{
+			fmt.Sprintf("pages/page%02d.html", i),
+			fmt.Sprintf("styles/style%02d.css", i),
+			fmt.Sprintf("scripts/script%02d.js", i),
+			fmt.Sprintf("assets/blob%02d.bin", i),
+		} {
+			if _, err := os.Stat(filepath.Join(dist, filepath.FromSlash(name))); err != nil {
+				t.Fatalf("output missing: %v", err)
+			}
+		}
+	}
+}
+
+func TestBuildConcurrentErrorPropagates(t *testing.T) {
+	src := t.TempDir()
+	for i := 0; i < 20; i++ {
+		writeFile(t, src, fmt.Sprintf("ok%02d.html", i), "<p>fine</p>")
+	}
+	writeFile(t, src, "broken.js", `var s = "unterminated`)
+
+	if err := Build(src, filepath.Join(t.TempDir(), "dist"), testLogger()); err == nil {
+		t.Fatal("expected the worker error to propagate")
 	}
 }
 

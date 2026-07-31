@@ -10,7 +10,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cameronnewman/static-site-minifier/internal/minify"
@@ -25,17 +27,29 @@ const (
 	newline = "\n"
 )
 
-// Stats holds aggregate results of a build run.
+// Stats holds aggregate results of a build run. The mutex guards the
+// fields updated by concurrent build workers.
 type Stats struct {
 	TotalFiles     int
 	ProcessedFiles int
 	TotalSaved     int64
 	OriginalSize   int64
 	TotalReduction float64
+
+	mu sync.Mutex
+}
+
+// buildTask is one file discovered by the walk, ready to be processed
+// by a worker.
+type buildTask struct {
+	relPath string
+	ext     string
+	size    int64
 }
 
 // Build walks srcDir, minifying HTML, CSS and JS files and copying all
-// other files into distDir, then logs a summary of the run.
+// other files into distDir, then logs a summary of the run. Files are
+// processed concurrently, one worker per CPU.
 func Build(srcDir, distDir string, logger *zap.Logger) error {
 	stats := &Stats{}
 
@@ -65,6 +79,10 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 		}
 	}()
 
+	// Discover every file first, then fan the work out to a bounded
+	// pool. Output paths never collide (one task per source file), so
+	// workers only share the stats, which are mutex-guarded.
+	var tasks []buildTask
 	err = fs.WalkDir(srcRoot.FS(), ".", func(relPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -72,26 +90,24 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 		if d.IsDir() || strings.HasPrefix(d.Name(), ".") {
 			return nil
 		}
-
-		ext := strings.ToLower(path.Ext(relPath))
-
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		srcSize := info.Size()
+		tasks = append(tasks, buildTask{
+			relPath: relPath,
+			ext:     strings.ToLower(path.Ext(relPath)),
+			size:    info.Size(),
+		})
 		stats.TotalFiles++
-		stats.OriginalSize += srcSize
-
-		switch ext {
-		case fileExtHTML, fileExtCSS, fileExtJS:
-			return processMinifiableFile(srcRoot, destRoot, relPath, ext, srcSize, stats, logger)
-		default:
-			return copyFile(srcRoot, destRoot, relPath, ext, logger)
-		}
+		stats.OriginalSize += info.Size()
+		return nil
 	})
-
 	if err != nil {
+		return err
+	}
+
+	if err := runTasks(tasks, srcRoot, destRoot, stats, logger); err != nil {
 		return err
 	}
 
@@ -103,6 +119,67 @@ func Build(srcDir, distDir string, logger *zap.Logger) error {
 		zap.Float64("total_minified_reduction", stats.TotalReduction))
 
 	return nil
+}
+
+// runTasks processes tasks with one worker per CPU and returns the
+// first error encountered.
+func runTasks(tasks []buildTask, srcRoot, destRoot *os.Root, stats *Stats, logger *zap.Logger) error {
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(tasks) {
+		workers = len(tasks)
+	}
+	if workers < 1 {
+		return nil
+	}
+
+	queue := make(chan buildTask)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+
+	setErr := func(err error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		mu.Unlock()
+	}
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range queue {
+				var err error
+				switch task.ext {
+				case fileExtHTML, fileExtCSS, fileExtJS:
+					err = processMinifiableFile(srcRoot, destRoot, task.relPath, task.ext, task.size, stats, logger)
+				default:
+					err = copyFile(srcRoot, destRoot, task.relPath, task.ext, logger)
+				}
+				if err != nil {
+					setErr(err)
+					return
+				}
+			}
+		}()
+	}
+
+	for _, task := range tasks {
+		mu.Lock()
+		stop := firstErr != nil
+		mu.Unlock()
+		if stop {
+			break
+		}
+		queue <- task
+	}
+	close(queue)
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	return firstErr
 }
 
 func processMinifiableFile(srcRoot, destRoot *os.Root, relPath, ext string, srcSize int64, stats *Stats, logger *zap.Logger) error {
@@ -133,7 +210,10 @@ func processMinifiableFile(srcRoot, destRoot *os.Root, relPath, ext string, srcS
 
 	minSize := int64(len(minified))
 	saved := srcSize - minSize
+	stats.mu.Lock()
 	stats.TotalSaved += saved
+	stats.ProcessedFiles++
+	stats.mu.Unlock()
 	reduction := roundFloat(float64(saved)/float64(srcSize)*100, 2)
 
 	logger.Info("[Minified]",
@@ -143,7 +223,6 @@ func processMinifiableFile(srcRoot, destRoot *os.Root, relPath, ext string, srcS
 		zap.Int64("minified_bytes", minSize),
 		zap.Float64("minified_reduction", reduction))
 
-	stats.ProcessedFiles++
 	return nil
 }
 
