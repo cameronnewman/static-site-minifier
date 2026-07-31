@@ -30,6 +30,7 @@ runs:
       shell: bash
       env:
         SSM_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
 
@@ -57,7 +58,14 @@ runs:
           # back to the newest release that has this asset.
           if ! curl -fsIL --retry 3 --retry-delay 2 "$url" -o /dev/null; then
             echo "latest release has no ${asset}.tar.gz; checking recent releases"
-            url=$(curl -fsSL --retry 3 --retry-delay 2 \
+            # Authenticate when a token is available: unauthenticated
+            # api.github.com calls from shared Actions runner IPs are
+            # rate limited and fail intermittently with 403.
+            auth=()
+            if [ -n "${GH_TOKEN:-}" ]; then
+              auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+            fi
+            url=$(curl -fsSL --retry 3 --retry-delay 2 "${auth[@]}" \
               "https://api.github.com/repos/${repo}/releases?per_page=15" \
               | grep -o "https://github.com/${repo}/releases/download/[^\"]*/${asset}\.tar\.gz" \
               | head -n 1)
