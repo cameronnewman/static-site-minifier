@@ -3,7 +3,9 @@
 package main
 
 import (
-	"log"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 
 	"github.com/caarlos0/env/v11"
@@ -13,6 +15,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// Build metadata, injected via -ldflags at build time.
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
+const usage = "Usage: builder [build|run|version]"
+
+// Config holds the environment-driven configuration.
 type Config struct {
 	SourceDirectory      string `env:"SRC_DIR" envDefault:"src"`
 	DestinationDirectory string `env:"DEST_DIR" envDefault:"dist"`
@@ -20,31 +32,45 @@ type Config struct {
 	Debug                bool   `env:"DEBUG" envDefault:"false"`
 }
 
-func main() {
+// run executes the CLI. environ overrides the process environment when
+// non-nil, and stdout receives the version output.
+func run(args []string, environ map[string]string, stdout io.Writer) error {
 	var cfg Config
-	if err := env.Parse(&cfg); err != nil {
-		log.Fatalf("failed to parse config: %v", err)
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: environ}); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	logger, err := logger.New(cfg.Debug)
+	if len(args) < 2 {
+		return errors.New("no command specified. " + usage)
+	}
+
+	log, err := logger.New(cfg.Debug)
 	if err != nil {
-		log.Fatalf("failed to create logger: %v", err)
+		return fmt.Errorf("failed to create logger: %w", err)
 	}
 
-	if len(os.Args) < 2 {
-		logger.Fatal("Please specify a subcommand. Usage: builder [build|run]")
-	}
-
-	switch os.Args[1] {
+	switch args[1] {
 	case "build":
-		logger.Info("Starting build process...", zap.String("source_directory", cfg.SourceDirectory), zap.String("destination_directory", cfg.DestinationDirectory))
-		if err := builder.Build(cfg.SourceDirectory, cfg.DestinationDirectory, logger); err != nil {
-			logger.Fatal("Build failed", zap.Error(err))
-		}
+		log.Info("Starting build process...",
+			zap.String("source_directory", cfg.SourceDirectory),
+			zap.String("destination_directory", cfg.DestinationDirectory))
+		return builder.Build(cfg.SourceDirectory, cfg.DestinationDirectory, log)
 	case "run":
-		logger.Info("Starting serve...", zap.String("source_directory", cfg.SourceDirectory), zap.Int("port", cfg.Port))
-		server.Serve(cfg.SourceDirectory, cfg.Port, logger)
+		log.Info("Starting serve...",
+			zap.String("source_directory", cfg.SourceDirectory),
+			zap.Int("port", cfg.Port))
+		return server.Serve(cfg.SourceDirectory, cfg.Port, log)
+	case "version":
+		_, err := fmt.Fprintf(stdout, "builder %s (commit %s, built %s)\n", Version, Commit, BuildTime)
+		return err
 	default:
-		logger.Info("Unknown command. Usage: builder [build|run]")
+		return fmt.Errorf("unknown command %q. %s", args[1], usage)
+	}
+}
+
+func main() {
+	if err := run(os.Args, nil, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
 	}
 }
