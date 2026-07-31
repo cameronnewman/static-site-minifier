@@ -67,6 +67,7 @@ func JS(in []byte) ([]byte, error) {
 // passed through without optimization.
 func tokenizeJS(in []byte) (tokens []jsToken, clean bool, err error) {
 	clean = true
+	tokens = make([]jsToken, 0, len(in)/8+16)
 
 	i, n := 0, len(in)
 	sawNewline := false
