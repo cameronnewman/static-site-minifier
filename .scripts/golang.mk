@@ -35,7 +35,7 @@ COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 
 # Platforms for release builds
-PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+PLATFORMS := linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64 windows/amd64
 
 ## Build targets
 
@@ -76,8 +76,9 @@ ifeq ($(filter $(ENVIRONMENT),local docker),$(ENVIRONMENT))
 		arch=$${platform#*/}; \
 		output=$(BUILD_DIR)/$(BINARY)-$$os-$$arch; \
 		if [ "$$os" = "windows" ]; then output="$$output.exe"; fi; \
+		arm_env=""; if [ "$$arch" = "arm" ]; then arm_env="GOARM=7"; fi; \
 		echo "Building $$os/$$arch..."; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch $(GO) build -buildvcs=false $(GOFLAGS) $(LDFLAGS) -o $$output $(MAIN_PATH); \
+		env $$arm_env CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch $(GO) build -buildvcs=false $(GOFLAGS) $(LDFLAGS) -o $$output $(MAIN_PATH); \
 	done
 else
 	@mkdir -p $(BUILD_DIR)
@@ -92,8 +93,9 @@ else
 		arch=$${platform#*/}; \
 		output=$(BUILD_DIR)/$(BINARY)-$$os-$$arch; \
 		if [ "$$os" = "windows" ]; then output="$$output.exe"; fi; \
+		arm_env=""; if [ "$$arch" = "arm" ]; then arm_env="GOARM=7"; fi; \
 		echo "Building $$os/$$arch..."; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build -buildvcs=false $(GOFLAGS) $(LDFLAGS) -o $$output $(MAIN_PATH); \
+		env $$arm_env CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build -buildvcs=false $(GOFLAGS) $(LDFLAGS) -o $$output $(MAIN_PATH); \
 	done'
 endif
 

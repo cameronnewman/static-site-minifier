@@ -1,0 +1,76 @@
+name: 'Static Site Minifier'
+description: >-
+  Minify a static site (HTML, CSS, JS) using a prebuilt
+  static-site-minifier binary downloaded from GitHub releases.
+author: 'cameronnewman'
+branding:
+  icon: 'minimize-2'
+  color: 'blue'
+
+inputs:
+  version:
+    description: >-
+      Release tag to download (for example v0.3.1-abc1234), or "latest"
+      for the newest release.
+    required: false
+    default: 'latest'
+  src:
+    description: 'Source directory to minify.'
+    required: false
+    default: 'src'
+  dest:
+    description: 'Destination directory for the minified site.'
+    required: false
+    default: 'dist'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download builder binary
+      shell: bash
+      env:
+        SSM_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        case "$(uname -s)" in
+          Linux) os=linux ;;
+          Darwin) os=darwin ;;
+          MINGW*|MSYS*|CYGWIN*) os=windows ;;
+          *) echo "unsupported OS: $(uname -s)" >&2; exit 1 ;;
+        esac
+        case "$(uname -m)" in
+          x86_64|amd64) arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          armv7l|armv6l|arm) arch=arm ;;
+          *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+
+        asset="builder-${os}-${arch}"
+        if [ "$os" = "windows" ]; then asset="${asset}.exe"; fi
+
+        if [ "$SSM_VERSION" = "latest" ]; then
+          url="https://github.com/cameronnewman/static-site-minifier/releases/latest/download/${asset}.tar.gz"
+        else
+          url="https://github.com/cameronnewman/static-site-minifier/releases/download/${SSM_VERSION}/${asset}.tar.gz"
+        fi
+
+        dir="${RUNNER_TEMP}/static-site-minifier"
+        mkdir -p "$dir"
+        echo "Downloading $url"
+        curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$dir/${asset}.tar.gz"
+        tar -xzf "$dir/${asset}.tar.gz" -C "$dir"
+
+        bin="$dir/builder"
+        if [ "$os" = "windows" ]; then bin="${bin}.exe"; fi
+        mv "$dir/${asset}" "$bin"
+        chmod +x "$bin"
+        echo "SSM_BIN=$bin" >> "$GITHUB_ENV"
+        "$bin" version
+
+    - name: Minify site
+      shell: bash
+      env:
+        SRC_DIR: ${{ inputs.src }}
+        DEST_DIR: ${{ inputs.dest }}
+      run: '"$SSM_BIN" build'

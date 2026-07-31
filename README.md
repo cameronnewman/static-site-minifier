@@ -72,8 +72,26 @@ Or install straight into your `GOBIN`:
 go install github.com/cameronnewman/static-site-minifier/cmd/builder@latest
 ```
 
-Pre-built binaries for Linux, macOS, and Windows are attached to each
+Pre-built binaries for Linux (amd64, arm64, arm), macOS (amd64,
+arm64), and Windows are attached to each
 [GitHub release](https://github.com/cameronnewman/static-site-minifier/releases).
+
+## GitHub Action
+
+Minify a site in CI without installing anything - the action downloads
+a prebuilt binary from the releases and runs it:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: cameronnewman/static-site-minifier@main
+    with:
+      src: src    # source directory (default: src)
+      dest: dist  # output directory (default: dist)
+```
+
+Pin a specific release with `version: v0.3.1-abc1234` (defaults to
+`latest`). Works on Linux, macOS, and Windows runners, including ARM.
 
 ## Usage
 
