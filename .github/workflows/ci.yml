@@ -188,3 +188,15 @@ jobs:
           name: ${{ steps.version.outputs.version }}
           generate_release_notes: true
           files: bin/*.tar.gz
+
+      # Keep the v1 major tag on the latest release so workflows using
+      # aanantaco/static-site-minifier@v1 always get the newest action.
+      # The Marketplace listing follows new releases automatically once
+      # the action has been published there (a one-time step in the
+      # release UI).
+      - name: Update the v1 major tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f v1 "${{ github.sha }}"
+          git push origin v1 --force
