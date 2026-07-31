@@ -49,10 +49,25 @@ runs:
         asset="builder-${os}-${arch}"
         if [ "$os" = "windows" ]; then asset="${asset}.exe"; fi
 
+        repo="aanantaco/static-site-minifier"
         if [ "$SSM_VERSION" = "latest" ]; then
-          url="https://github.com/aanantaco/static-site-minifier/releases/latest/download/${asset}.tar.gz"
+          url="https://github.com/${repo}/releases/latest/download/${asset}.tar.gz"
+          # The release marked "latest" may carry no binaries (for
+          # example a release published on the moving v1 tag). Fall
+          # back to the newest release that has this asset.
+          if ! curl -fsIL --retry 3 --retry-delay 2 "$url" -o /dev/null; then
+            echo "latest release has no ${asset}.tar.gz; checking recent releases"
+            url=$(curl -fsSL --retry 3 --retry-delay 2 \
+              "https://api.github.com/repos/${repo}/releases?per_page=15" \
+              | grep -o "https://github.com/${repo}/releases/download/[^\"]*/${asset}\.tar\.gz" \
+              | head -n 1)
+            if [ -z "$url" ]; then
+              echo "no recent release contains ${asset}.tar.gz" >&2
+              exit 1
+            fi
+          fi
         else
-          url="https://github.com/aanantaco/static-site-minifier/releases/download/${SSM_VERSION}/${asset}.tar.gz"
+          url="https://github.com/${repo}/releases/download/${SSM_VERSION}/${asset}.tar.gz"
         fi
 
         dir="${RUNNER_TEMP}/static-site-minifier"
