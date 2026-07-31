@@ -46,20 +46,27 @@ var jsRegexKeywords = map[string]bool{
 // code stays within an analysable subset, function-local variables
 // are additionally renamed to shorter names (see mangleJS).
 func JS(in []byte) ([]byte, error) {
-	tokens, err := tokenizeJS(in)
+	tokens, clean, err := tokenizeJS(in)
 	if err != nil {
 		return nil, err
 	}
 
-	renames, info := mangleJS(tokens)
+	var renames map[int][]byte
+	var info *jsEmitInfo
+	if clean {
+		renames, info = mangleJS(tokens)
+	}
 
 	return emitJS(tokens, renames, info), nil
 }
 
 // tokenizeJS scans in into tokens, dropping comments (except license
-// banners) and recording the whitespace between tokens.
-func tokenizeJS(in []byte) ([]jsToken, error) {
-	var tokens []jsToken
+// banners) and recording the whitespace between tokens. clean is
+// false when the scan needed an error-recovery fallback, which only
+// happens on inputs that are not valid JavaScript; such inputs are
+// passed through without optimization.
+func tokenizeJS(in []byte) (tokens []jsToken, clean bool, err error) {
+	clean = true
 
 	i, n := 0, len(in)
 	sawNewline := false
@@ -101,7 +108,7 @@ func tokenizeJS(in []byte) ([]jsToken, error) {
 		if c == '/' && i+1 < n && in[i+1] == '*' {
 			end := bytes.Index(in[i+2:], []byte("*/"))
 			if end < 0 {
-				return nil, fmt.Errorf("%w: comment at offset %d", ErrUnterminated, i)
+				return nil, false, fmt.Errorf("%w: comment at offset %d", ErrUnterminated, i)
 			}
 			switch {
 			case i+2 < n && in[i+2] == '!':
@@ -121,14 +128,14 @@ func tokenizeJS(in []byte) ([]jsToken, error) {
 		case c == '"' || c == '\'':
 			j, err := scanJSString(in, i)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			push(jsString, in[i:j])
 			i = j
 		case c == '`':
 			j, err := scanJSTemplate(in, i)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			push(jsTemplate, in[i:j])
 			i = j
@@ -138,7 +145,10 @@ func tokenizeJS(in []byte) ([]jsToken, error) {
 				push(jsRegex, in[i:j])
 				i = j
 			} else {
-				// Not a valid regex after all; treat as division.
+				// A '/' in regex position that is not a regex cannot
+				// occur in valid JavaScript; recover as division but
+				// disable optimization.
+				clean = false
 				push(jsPunct, in[i:i+1])
 				i++
 			}
@@ -158,7 +168,7 @@ func tokenizeJS(in []byte) ([]jsToken, error) {
 		}
 	}
 
-	return tokens, nil
+	return tokens, clean, nil
 }
 
 // emitJS renders tokens with minimal whitespace, applying renames to
@@ -398,34 +408,86 @@ func scanJSTemplate(in []byte, i int) (int, error) {
 }
 
 // scanJSTemplateExpr returns the index just past the '}' closing a
-// template expression whose body starts at i.
+// template expression whose body starts at i. The body is scanned with
+// the same token rules as top-level code - strings, nested templates,
+// comments and regex literals (with regex-vs-division context) - so
+// braces and quotes inside them never desynchronize the scan.
 func scanJSTemplateExpr(in []byte, i int) (int, error) {
 	depth := 1
-	j := i
-	for j < len(in) {
-		switch in[j] {
-		case '{':
-			depth++
+	j, n := i, len(in)
+	var prev jsToken
+	havePrev := false
+	setPrev := func(kind jsTokenKind, text []byte) {
+		prev = jsToken{kind: kind, text: text}
+		havePrev = true
+	}
+
+	for j < n {
+		c := in[j]
+		switch {
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
 			j++
-		case '}':
+		case c == '/' && j+1 < n && in[j+1] == '/':
+			for j < n && in[j] != '\n' {
+				j++
+			}
+		case c == '/' && j+1 < n && in[j+1] == '*':
+			end := bytes.Index(in[j+2:], []byte("*/"))
+			if end < 0 {
+				return 0, fmt.Errorf("%w: comment at offset %d", ErrUnterminated, j)
+			}
+			j += 2 + end + 2
+		case c == '"' || c == '\'':
+			end, err := scanJSString(in, j)
+			if err != nil {
+				return 0, err
+			}
+			setPrev(jsString, in[j:end])
+			j = end
+		case c == '`':
+			end, err := scanJSTemplate(in, j)
+			if err != nil {
+				return 0, err
+			}
+			setPrev(jsTemplate, in[j:end])
+			j = end
+		case c == '/':
+			pv := &prev
+			if !havePrev {
+				pv = nil
+			}
+			if jsRegexAllowedTok(pv) {
+				if end, ok := scanJSRegex(in, j); ok {
+					setPrev(jsRegex, in[j:end])
+					j = end
+					continue
+				}
+			}
+			setPrev(jsPunct, in[j:j+1])
+			j++
+		case c == '{':
+			depth++
+			setPrev(jsPunct, in[j:j+1])
+			j++
+		case c == '}':
 			depth--
 			j++
 			if depth == 0 {
 				return j, nil
 			}
-		case '"', '\'':
-			end, err := scanJSString(in, j)
-			if err != nil {
-				return 0, err
+			setPrev(jsPunct, in[j-1:j])
+		case isJSIdentChar(c):
+			end := j
+			for end < n && isJSIdentChar(in[end]) {
+				end++
 			}
+			setPrev(jsIdent, in[j:end])
 			j = end
-		case '`':
-			end, err := scanJSTemplate(in, j)
-			if err != nil {
-				return 0, err
-			}
-			j = end
+		case (c == '+' || c == '-') && j+1 < n && in[j+1] == c:
+			setPrev(jsPunct, in[j:j+2])
+			j += 2
 		default:
+			setPrev(jsPunct, in[j:j+1])
 			j++
 		}
 	}

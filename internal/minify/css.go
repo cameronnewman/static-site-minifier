@@ -24,6 +24,9 @@ func CSS(in []byte) ([]byte, error) {
 			return
 		}
 		prev := out.Bytes()[out.Len()-1]
+		if prev == ' ' {
+			return // already separated
+		}
 
 		if parenDepth > 0 {
 			// Inside parentheses spacing can be significant (calc);
@@ -87,6 +90,9 @@ func CSS(in []byte) ([]byte, error) {
 			}
 			if j < n {
 				j++
+			}
+			if j > n {
+				j = n // trailing backslash at end of input
 			}
 			out.Write(in[i:j])
 			i = j

@@ -41,13 +41,13 @@ func HTML(in []byte) ([]byte, error) {
 				out.Write(comment)
 			}
 			i += end + 3
-		case hasPrefixFold(in[i:], "<script"):
+		case isTagAt(in, i, "script"):
 			i = writeRawElement(&out, in, i, "script", JS)
-		case hasPrefixFold(in[i:], "<style"):
+		case isTagAt(in, i, "style"):
 			i = writeRawElement(&out, in, i, "style", CSS)
-		case hasPrefixFold(in[i:], "<pre"):
+		case isTagAt(in, i, "pre"):
 			i = writeRawElement(&out, in, i, "pre", nil)
-		case hasPrefixFold(in[i:], "<textarea"):
+		case isTagAt(in, i, "textarea"):
 			i = writeRawElement(&out, in, i, "textarea", nil)
 		default:
 			i = writeTag(&out, in, i)
@@ -136,19 +136,26 @@ func writeRawElement(out *bytes.Buffer, in []byte, i int, name string, mini func
 	tagEnd := writeTag(out, in, i)
 	tag := in[i:tagEnd]
 
-	// A self-closing tag has no content.
-	if bytes.HasSuffix(tag, []byte("/>")) {
+	// A self-closing tag has no content. Whitespace may separate the
+	// '/' from the '>' in the source.
+	trimmed := bytes.TrimRight(tag, ">")
+	trimmed = bytes.TrimRight(trimmed, " \t\n\r\f")
+	if bytes.HasSuffix(trimmed, []byte("/")) {
 		return tagEnd
 	}
 
-	closing := "</" + name
-	rel := indexFold(in[tagEnd:], closing)
-	if rel < 0 {
+	contentEnd := -1
+	for j := tagEnd; j < n; j++ {
+		if in[j] == '<' && isCloseTagAt(in, j, name) {
+			contentEnd = j
+			break
+		}
+	}
+	if contentEnd < 0 {
 		// No closing tag; emit the rest verbatim.
 		out.Write(in[tagEnd:])
 		return n
 	}
-	contentEnd := tagEnd + rel
 
 	content := in[tagEnd:contentEnd]
 	if mini != nil && rawContentMinifiable(name, tag) {
@@ -216,6 +223,41 @@ func hasPrefixFold(s []byte, prefix string) bool {
 		return false
 	}
 	return strings.EqualFold(string(s[:len(prefix)]), prefix)
+}
+
+// isTagAt reports whether an opening tag with exactly the given name
+// starts at i: "<name" followed by whitespace, '>', '/' or the end of
+// input, so "<scriptype>" never matches "script".
+func isTagAt(in []byte, i int, name string) bool {
+	if !hasPrefixFold(in[i:], "<"+name) {
+		return false
+	}
+	after := i + 1 + len(name)
+	if after >= len(in) {
+		return true
+	}
+	switch in[after] {
+	case ' ', '\t', '\n', '\r', '\f', '>', '/':
+		return true
+	}
+	return false
+}
+
+// isCloseTagAt reports whether a closing tag with exactly the given
+// name starts at i, with the same delimiter rule as isTagAt.
+func isCloseTagAt(in []byte, i int, name string) bool {
+	if !hasPrefixFold(in[i:], "</"+name) {
+		return false
+	}
+	after := i + 2 + len(name)
+	if after >= len(in) {
+		return true
+	}
+	switch in[after] {
+	case ' ', '\t', '\n', '\r', '\f', '>', '/':
+		return true
+	}
+	return false
 }
 
 // indexFold returns the index of the first occurrence of substr in s,

@@ -258,6 +258,19 @@ func TestMangleASIVarList(t *testing.T) {
 	}
 }
 
+func TestMangleBlockAfterSemicolonIsNotAnObject(t *testing.T) {
+	// '{' at statement position opens a block. If it were misread as
+	// an object literal, f(x) would parse as a method definition and
+	// x - really a global reference - would be renamed.
+	in := `(function() { ; { globalFn(globalVar) } }());`
+	out := mustJS(t, in)
+	for _, name := range []string{"globalFn", "globalVar"} {
+		if !strings.Contains(out, name) {
+			t.Errorf("global %q must be preserved: %s", name, out)
+		}
+	}
+}
+
 func TestMangleNameGenerator(t *testing.T) {
 	if got := jsNameFor(0); got != "a" {
 		t.Errorf("jsNameFor(0) = %q", got)

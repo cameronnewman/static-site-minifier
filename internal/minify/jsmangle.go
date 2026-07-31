@@ -287,18 +287,26 @@ func (a *jsAnalysis) isObjectBrace(tokens []jsToken, prev int) bool {
 		return false
 	}
 	p := &tokens[prev]
-	if p.kind == jsIdent {
+	switch p.kind {
+	case jsIdent:
 		switch string(p.text) {
 		case "do", "else":
 			return false // these precede blocks, not objects
 		}
+		return jsRegexKeywords[string(p.text)] // return {..}, case {..}, ...
+	case jsPunct:
+		switch string(p.text) {
+		case ";", "{", "}", ")", "]", "++", "--":
+			// Statement position: a '{' here opens a block.
+			return false
+		case ":":
+			// An object value after ':' is an object; a block after a
+			// label's or case's ':' is a block.
+			return a.top() != nil && a.top().kind == frameObject
+		}
+		return true
 	}
-	if p.kind == jsPunct && string(p.text) == ":" {
-		// An object value after ':' is an object; a block after a
-		// label's or case's ':' is a block.
-		return a.top() != nil && a.top().kind == frameObject
-	}
-	return jsRegexAllowedTok(p)
+	return false
 }
 
 func (a *jsAnalysis) popFrame(i int) {
