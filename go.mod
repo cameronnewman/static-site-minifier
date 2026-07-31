@@ -1,4 +1,4 @@
-module github.com/cameronnewman/static-site-minifier
+module github.com/aanantaco/static-site-minifier
 
 go 1.26.0
 

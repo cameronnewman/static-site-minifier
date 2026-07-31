@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cameronnewman/static-site-minifier/internal/minify"
+	"github.com/aanantaco/static-site-minifier/internal/minify"
 	"go.uber.org/zap"
 )
 

@@ -2,7 +2,7 @@ name: 'Static Site Minifier'
 description: >-
   Minify a static site (HTML, CSS, JS) using a prebuilt
   static-site-minifier binary downloaded from GitHub releases.
-author: 'cameronnewman'
+author: 'aanantaco'
 branding:
   icon: 'minimize-2'
   color: 'blue'
@@ -50,9 +50,9 @@ runs:
         if [ "$os" = "windows" ]; then asset="${asset}.exe"; fi
 
         if [ "$SSM_VERSION" = "latest" ]; then
-          url="https://github.com/cameronnewman/static-site-minifier/releases/latest/download/${asset}.tar.gz"
+          url="https://github.com/aanantaco/static-site-minifier/releases/latest/download/${asset}.tar.gz"
         else
-          url="https://github.com/cameronnewman/static-site-minifier/releases/download/${SSM_VERSION}/${asset}.tar.gz"
+          url="https://github.com/aanantaco/static-site-minifier/releases/download/${SSM_VERSION}/${asset}.tar.gz"
         fi
 
         dir="${RUNNER_TEMP}/static-site-minifier"
